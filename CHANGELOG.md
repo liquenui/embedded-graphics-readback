@@ -50,4 +50,4 @@ against one concrete framebuffer.
   impl — and rendering into a `Framebuffer` is also the shortest route to
   readback for a streaming display driver.
 
-[0.1.0]: https://github.com/goyox86/embedded-graphics-readback/releases/tag/v0.1.0
+[0.1.0]: https://github.com/liquenui/embedded-graphics-readback/releases/tag/v0.1.0
