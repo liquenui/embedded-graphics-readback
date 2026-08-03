@@ -1,18 +1,27 @@
 [package]
 name = "embedded-graphics-readback"
-description = "A ReadbackTarget extension trait for embedded-graphics — read pixels back from buffered draw targets. no_std."
+description = "A ReadbackTarget capability trait for embedded-graphics — sample the pixels already on a draw target. no_std."
 documentation = "https://docs.rs/embedded-graphics-readback"
+readme = "README.md"
 version = "0.1.0"
 authors = ["Jose Narvaez <goyox86@gmail.com>"]
 edition = "2024"
+rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/goyox86/embedded-graphics-readback"
 homepage = "https://github.com/goyox86/embedded-graphics-readback"
-keywords = ["embedded-graphics", "graphics", "embedded", "no-std"]
-categories = ["embedded", "no-std"]
+keywords = ["embedded-graphics", "graphics", "embedded", "no-std", "framebuffer"]
+categories = ["embedded", "no-std", "graphics"]
+exclude = ["/.github", "/.claude"]
+
+[features]
+default = []
+# Implements `ReadbackTarget` for `embedded_graphics::framebuffer::Framebuffer`.
+framebuffer = ["dep:embedded-graphics"]
 
 [dependencies]
 embedded-graphics-core = "0.4"
+embedded-graphics = { version = "0.8", optional = true }
 
 [dev-dependencies]
 embedded-graphics = "0.8"
@@ -30,3 +39,4 @@ needless_pass_by_value = "warn"
 
 [package.metadata.docs.rs]
 all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

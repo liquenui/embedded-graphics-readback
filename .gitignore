@@ -1,2 +1,6 @@
 /target
 Cargo.lock
+
+# Transient files left by the local settings writer; the settings file
+# itself is covered by the global ignore.
+.claude/settings.local.json.tmp.*

@@ -1,24 +1,53 @@
 #![no_std]
-//! A pixel-readback extension trait for [`embedded-graphics`].
+#![cfg_attr(docsrs, feature(doc_cfg))]
+//! A pixel-readback capability for [`embedded-graphics`] draw targets.
 //!
-//! `embedded-graphics`' [`DrawTarget`] is write-only: it can push pixels but
-//! never read them back. Some targets — anything backed by a framebuffer in RAM
-//! (a buffered display driver, a software canvas, the simulator) — *can* report
-//! what is currently at a pixel. [`ReadbackTarget`] is the opt-in capability
-//! that exposes that, so destination-aware rendering (antialiased compositing,
-//! blend modes, read-modify-write effects) can sample the real backdrop instead
-//! of guessing.
+//! Compositing needs to know what is already on the target before it writes.
+//! Antialiased edges, translucent fills, blend modes and every other
+//! read-modify-write effect blend a foreground colour *into* a backdrop, and
+//! the backdrop is whatever the target currently holds. [`ReadbackTarget`] is
+//! the capability that says a target can answer that question, so rendering
+//! code can require it generically:
+//!
+//! ```rust,ignore
+//! /// Blend `fg` over one scanline run at the given per-pixel coverage.
+//! fn composite_run<D: ReadbackTarget>(
+//!     target: &mut D,
+//!     run: &Rectangle,
+//!     fg: D::Color,
+//!     coverage: &[u8],
+//!     scratch: &mut [D::Color],
+//! ) {
+//!     target.read_area(run, scratch);
+//!     for (px, &cov) in scratch.iter_mut().zip(coverage) {
+//!         *px = blend_over(fg, *px, cov);
+//!     }
+//!     let _ = target.fill_contiguous(run, scratch.iter().copied());
+//! }
+//! ```
+//!
+//! `ReadbackTarget: DrawTarget`, so a single bound supplies both halves of that
+//! loop and a single `Self::Color` names the pixel type throughout. The
+//! immutable read finishes before the mutable write begins, so one `&mut D`
+//! carries the whole operation — no staging buffer for the shape's bounding
+//! box, just a scratch run.
 //!
 //! It is a thin, dependency-light contract over [`embedded-graphics-core`]:
-//! implement [`read_pixel`](ReadbackTarget::read_pixel) and you can be read
-//! back; everything else has a default.
+//! implement [`read_pixel`](ReadbackTarget::read_pixel) and the rest follows.
+//! [`read_area`](ReadbackTarget::read_area) copies a region out row-major in
+//! one call, defaulting to a `read_pixel` loop and overridable with a block
+//! copy.
 //!
-//! # Relationship to `GetPixel`
+//! Because the capability belongs to the *target*, wrappers forward it:
+//! clipping, translating and offscreen adapters stay readback-capable by
+//! delegating both methods, so a pipeline keeps its capability all the way
+//! down.
 //!
-//! [`read_pixel`](ReadbackTarget::read_pixel) is intentionally signature-
-//! compatible with [`embedded_graphics_core::image::GetPixel::pixel`]. A target
-//! that already implements the standard `GetPixel` can satisfy `ReadbackTarget`
-//! in one line:
+//! # Delegating from `GetPixel`
+//!
+//! [`read_pixel`](ReadbackTarget::read_pixel) shares its signature with
+//! [`GetPixel::pixel`](embedded_graphics_core::image::GetPixel::pixel), so a
+//! target that already implements that trait delegates in one line:
 //!
 //! ```
 //! use embedded_graphics_core::{draw_target::DrawTarget, geometry::Point, image::GetPixel};
@@ -45,14 +74,54 @@
 //! }
 //! ```
 //!
-//! `ReadbackTarget` is kept separate (rather than blanket-implemented over every
-//! `GetPixel`) so it can carry readback-specific methods like
-//! [`read_area`](ReadbackTarget::read_area) and so drivers opt in deliberately —
-//! a target that *can* draw is not assumed to be readable.
+//! A reader that returns a bare colour needs a bounds guard, since `read_pixel`
+//! answers `None` outside the bounding box:
+//!
+//! ```rust,ignore
+//! fn read_pixel(&self, p: Point) -> Option<Rgb888> {
+//!     self.bounding_box().contains(p).then(|| self.0.get_pixel(p))
+//! }
+//! ```
+//!
+//! Readback is opt-in rather than blanket-implemented, so it stays a deliberate
+//! statement about a target and can carry the cost contract on
+//! [`ReadbackTarget`].
+//!
+//! # `embedded-graphics` framebuffers
+//!
+//! [`embedded_graphics::framebuffer::Framebuffer`] is supported out of the box
+//! under the `framebuffer` feature:
+//!
+//! ```toml
+//! embedded-graphics-readback = { version = "0.1", features = ["framebuffer"] }
+//! ```
+//!
+//! The impl covers every colour type and data order `embedded-graphics` makes
+//! drawable, and overrides [`read_area`](ReadbackTarget::read_area) to build
+//! the backing image once per region. Draw into a `Framebuffer`, hand it to any
+//! `ReadbackTarget` renderer, and flush it to the panel.
+//!
+//! `Framebuffer` is also the shortest route to readback for a streaming driver:
+//! render into one, then push it out over the bus.
+//!
+//! # Who implements it
+//!
+//! Framebuffers and canvases — anything holding pixels in RAM, where a read is
+//! a slice index — are the natural implementors, along with buffered display
+//! drivers that expose their buffer and simulators wrapped in a newtype.
+//! Streaming drivers hold no pixels, so they leave the trait unimplemented and
+//! callers keep the write-only path.
+//!
+//! [`embedded_graphics::framebuffer::Framebuffer`]:
+//!     https://docs.rs/embedded-graphics/latest/embedded_graphics/framebuffer/struct.Framebuffer.html
 //!
 //! [`embedded-graphics`]: https://docs.rs/embedded-graphics
 //! [`embedded-graphics-core`]: https://docs.rs/embedded-graphics-core
 //! [`DrawTarget`]: embedded_graphics_core::draw_target::DrawTarget
+
+#[cfg(feature = "framebuffer")]
+#[cfg_attr(docsrs, doc(cfg(feature = "framebuffer")))]
+mod framebuffer;
 
 use embedded_graphics_core::{
     draw_target::DrawTarget,
@@ -73,10 +142,11 @@ use embedded_graphics_core::{
 /// That holds for RAM-backed framebuffers (a slice copy) and DMA-capable
 /// panels, which are the intended targets. A panel whose only read primitive is
 /// a slow per-pixel bus command must **not** implement this trait merely
-/// because it can: leaving the default [`read_area`] in place turns every
-/// antialiased run into `width` bus round-trips and makes read-modify-write
-/// rendering O(pixels) on the bus. Implement it only when reads are cheap, and
-/// override [`read_area`] with a block copy whenever the framebuffer allows it.
+/// because it can: leaving the default [`read_area`](Self::read_area) in place
+/// turns every antialiased run into `width` bus round-trips and makes
+/// read-modify-write rendering O(pixels) on the bus. Implement it only when
+/// reads are cheap, and override [`read_area`](Self::read_area) with a block
+/// copy whenever the framebuffer allows it.
 pub trait ReadbackTarget: DrawTarget {
     /// The colour currently at `point`, or `None` if `point` lies outside the
     /// target's [bounding box](embedded_graphics_core::geometry::Dimensions::bounding_box).
@@ -108,10 +178,7 @@ pub trait ReadbackTarget: DrawTarget {
 mod tests {
     use super::*;
     use embedded_graphics::prelude::*;
-    use embedded_graphics_core::{
-        pixelcolor::Rgb565,
-        primitives::Rectangle,
-    };
+    use embedded_graphics_core::{pixelcolor::Rgb565, primitives::Rectangle};
 
     /// A tiny 4×4 RGB565 framebuffer for exercising the trait.
     struct TestFb {
@@ -120,7 +187,9 @@ mod tests {
 
     impl TestFb {
         fn new() -> Self {
-            Self { pixels: [Rgb565::BLACK; 16] }
+            Self {
+                pixels: [Rgb565::BLACK; 16],
+            }
         }
         fn index(p: Point) -> Option<usize> {
             (0..4).contains(&p.x).then_some(())?;
@@ -177,13 +246,18 @@ mod tests {
     fn read_area_default_fills_row_major() {
         let mut fb = TestFb::new();
         Pixel(Point::new(0, 0), Rgb565::RED).draw(&mut fb).unwrap();
-        Pixel(Point::new(1, 0), Rgb565::GREEN).draw(&mut fb).unwrap();
+        Pixel(Point::new(1, 0), Rgb565::GREEN)
+            .draw(&mut fb)
+            .unwrap();
         Pixel(Point::new(0, 1), Rgb565::BLUE).draw(&mut fb).unwrap();
 
         let mut out = [Rgb565::WHITE; 4];
         let n = fb.read_area(&Rectangle::new(Point::zero(), Size::new(2, 2)), &mut out);
         assert_eq!(n, 4);
-        assert_eq!(out, [Rgb565::RED, Rgb565::GREEN, Rgb565::BLUE, Rgb565::BLACK]);
+        assert_eq!(
+            out,
+            [Rgb565::RED, Rgb565::GREEN, Rgb565::BLUE, Rgb565::BLACK]
+        );
     }
 
     #[test]
