@@ -67,8 +67,7 @@ use embedded_graphics_core::{
 
 use crate::{ReadbackTarget, read_area_by_pixel};
 
-/// Shift a rectangle without pulling in `embedded-graphics`' `Transform`, which
-/// does not live in `embedded-graphics-core`.
+/// Shift a rectangle; `Transform` lives in `embedded-graphics`, not core.
 #[inline]
 fn translate(area: &Rectangle, offset: Point) -> Rectangle {
     Rectangle::new(area.top_left + offset, area.size)
@@ -78,14 +77,9 @@ fn translate(area: &Rectangle, offset: Point) -> Rectangle {
 /// `DrawTargetExt`.
 ///
 /// Blanket-implemented for every [`ReadbackTarget`], including the adapters
-/// themselves, so layers compose.
-///
-/// The names deliberately differ from `DrawTargetExt`'s `translated`,
-/// `cropped` and `clipped`: that trait is blanket-implemented for every
-/// [`DrawTarget`] and sits in `embedded-graphics`' prelude, so sharing a name
-/// would make both candidates apply at every call site that glob-imports it.
-/// Each method is shorthand for the matching struct constructor, for call
-/// sites that would rather not import this trait.
+/// themselves, so layers compose. The names differ from `DrawTargetExt`'s so
+/// both traits can sit in scope without ambiguous calls; each method is
+/// shorthand for the matching struct constructor.
 pub trait ReadbackTargetExt: ReadbackTarget + Sized {
     /// Translate the target's origin by `offset`.
     ///
@@ -289,10 +283,8 @@ where
     T: ReadbackTarget,
 {
     fn read_pixel(&self, point: Point) -> Option<Self::Color> {
-        // Reads honour the window. Writes, matching `embedded-graphics`, do not:
-        // they reach the parent wherever it has a pixel. Reporting a colour
-        // from outside `bounding_box` would break the trait's contract and the
-        // in-bounds count `read_area` returns.
+        // Reads honour the window, unlike writes: `read_pixel` promises `None`
+        // outside the bounding box.
         if self.bounding_box().contains(point) {
             self.parent.read_pixel(point)
         } else {
@@ -322,9 +314,7 @@ where
 {
     /// Wrap `parent`, admitting only the pixels inside `area`.
     ///
-    /// `area` is clamped to the parent's bounding box, matching
-    /// `embedded-graphics`' `Clipped`, so the layer never reports a bounding
-    /// box larger than the pixels behind it.
+    /// `area` is clamped to the parent's bounding box.
     #[must_use]
     pub fn new(parent: &'a mut T, area: &Rectangle) -> Self {
         let mask_area = area.intersection(&parent.bounding_box());

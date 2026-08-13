@@ -235,14 +235,8 @@ pub trait ReadbackTarget: DrawTarget {
     }
 }
 
-/// The per-pixel loop behind [`ReadbackTarget::read_area`]'s default.
-///
-/// Shared with the [`adapters`], which override `read_area` to hand whole
-/// regions to their parent and fall back to this when a region only partly
-/// overlaps the layer. Deliberately not public: `embedded-graphics-core`
-/// exports no helpers behind `DrawTarget`'s defaults either, and a wrapper
-/// that needs the walk can write it in eight lines. Easy to export later if
-/// a downstream asks; impossible to unexport once released.
+/// The per-pixel loop behind [`ReadbackTarget::read_area`]'s default; the
+/// [`adapters`] fall back to it where a region only partly overlaps a layer.
 pub(crate) fn read_area_by_pixel<T>(target: &T, area: &Rectangle, out: &mut [T::Color]) -> usize
 where
     T: ReadbackTarget + ?Sized,
