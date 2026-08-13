@@ -56,9 +56,6 @@ against one concrete framebuffer.
   applicable at every glob-importing call site. Each method is shorthand for a
   public constructor on the layer. The layers expose the `parent()` accessor
   the originals lack, so downstream code can extend them.
-- **`read_area_by_pixel`** — the per-pixel loop behind `read_area`'s default,
-  exposed so a wrapper that overrides `read_area` with a fast path can fall
-  back to it where the fast path does not apply, exactly as the adapters do.
 - **`framebuffer` feature** — implements `ReadbackTarget` for
   `embedded_graphics::framebuffer::Framebuffer`. The impl is generic over
   the intersection of `embedded-graphics`' own `DrawTarget` and

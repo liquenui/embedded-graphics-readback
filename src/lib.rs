@@ -235,17 +235,15 @@ pub trait ReadbackTarget: DrawTarget {
     }
 }
 
-/// The per-pixel loop behind [`ReadbackTarget::read_area`]'s default: reads
-/// `area` row-major via [`read_pixel`](ReadbackTarget::read_pixel), writing
-/// each in-bounds colour to the matching `out` slot and returning the
-/// in-bounds count.
+/// The per-pixel loop behind [`ReadbackTarget::read_area`]'s default.
 ///
-/// Public for wrappers that override
-/// [`read_area`](ReadbackTarget::read_area) with a fast path and need the
-/// per-pixel walk where that path does not apply — the [`adapters`] hand whole
+/// Shared with the [`adapters`], which override `read_area` to hand whole
 /// regions to their parent and fall back to this when a region only partly
-/// overlaps the layer.
-pub fn read_area_by_pixel<T>(target: &T, area: &Rectangle, out: &mut [T::Color]) -> usize
+/// overlaps the layer. Deliberately not public: `embedded-graphics-core`
+/// exports no helpers behind `DrawTarget`'s defaults either, and a wrapper
+/// that needs the walk can write it in eight lines. Easy to export later if
+/// a downstream asks; impossible to unexport once released.
+pub(crate) fn read_area_by_pixel<T>(target: &T, area: &Rectangle, out: &mut [T::Color]) -> usize
 where
     T: ReadbackTarget + ?Sized,
 {
