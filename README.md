@@ -4,12 +4,13 @@ A pixel-readback capability for [embedded-graphics] draw targets.
 
 Compositing needs to know what is already on the target before it writes.
 Antialiased edges, translucent fills, blend modes and every other
-read-modify-write effect blend a foreground colour *into* a backdrop, and the
+read-modify-write effect blend a foreground colour _into_ a backdrop, and the
 backdrop is whatever the target currently holds. `ReadbackTarget` is the
 capability that says a target can answer that question, so rendering code can
 require it generically:
 
-```rust,ignore
+```rust
+use embedded_graphics_core::{draw_target::DrawTarget, primitives::Rectangle};
 use embedded_graphics_readback::ReadbackTarget;
 
 /// Blend `fg` over one scanline run at the given per-pixel coverage.
@@ -99,9 +100,11 @@ fn read_area(&self, area: &Rectangle, out: &mut [Self::Color]) -> usize {
 }
 ```
 
-Because the trait is a property of the *target*, wrappers forward it. Clipping,
-translating and offscreen adapters stay readback-capable by delegating both
-methods, so a render pipeline keeps its capability all the way down.
+Because the capability belongs to the _target_, a wrapper carries it forward by
+delegating both methods — that is how a clipping, translating or offscreen layer
+keeps a pipeline readback-capable end to end. embedded-graphics' own
+[`DrawTargetExt`] adapters hold their parent privately, so a pipeline that reads
+through a layer supplies its own.
 
 ## Who implements it
 
@@ -116,13 +119,14 @@ leave the trait unimplemented and callers keep the write-only path.
 ## Cost contract
 
 Renderers call `read_area` once per run on the hot path and assume a read costs
-about what a write costs. That holds for RAM-backed framebuffers. Implement this
-trait when reads are cheap, and override `read_area` with a block copy whenever
-the framebuffer allows it.
+about what a write costs. That holds for RAM-backed framebuffers, where a read is
+slice arithmetic. Implement this trait where reads are cheap, and override
+`read_area` with a block copy whenever the target allows it.
 
 ## no_std
 
-`#![no_std]`, with `embedded-graphics-core` as the only dependency.
+`#![no_std]`, with `embedded-graphics-core` as its only required dependency. The
+`framebuffer` feature adds `embedded-graphics` itself.
 
 ## License
 
@@ -130,5 +134,6 @@ Licensed under either of MIT or Apache-2.0 at your option.
 
 [embedded-graphics]: https://docs.rs/embedded-graphics
 [`Framebuffer`]: https://docs.rs/embedded-graphics/latest/embedded_graphics/framebuffer/struct.Framebuffer.html
+[`DrawTargetExt`]: https://docs.rs/embedded-graphics/latest/embedded_graphics/draw_target/trait.DrawTargetExt.html
 [`read_area`]: https://docs.rs/embedded-graphics-readback/latest/embedded_graphics_readback/trait.ReadbackTarget.html#method.read_area
 [`GetPixel::pixel`]: https://docs.rs/embedded-graphics-core/latest/embedded_graphics_core/image/trait.GetPixel.html#tymethod.pixel

@@ -12,7 +12,7 @@ The crate tracks `embedded-graphics-core` `0.4`; moving to a new
 `embedded-graphics-core` minor is breaking for downstream code and bumps
 this crate's minor version in step.
 
-## [0.1.0] - 2026-08-03
+## [0.1.0] - 2026-08-13
 
 Initial release. Compositing — antialiased edges, translucent fills,
 blend modes, any read-modify-write effect — blends a foreground colour

@@ -9,7 +9,11 @@
 //! the capability that says a target can answer that question, so rendering
 //! code can require it generically:
 //!
-//! ```rust,ignore
+//! ```
+//! use embedded_graphics_core::{draw_target::DrawTarget, primitives::Rectangle};
+//! use embedded_graphics_readback::ReadbackTarget;
+//!
+//! # fn blend_over<C>(fg: C, _bg: C, _coverage: u8) -> C { fg }
 //! /// Blend `fg` over one scanline run at the given per-pixel coverage.
 //! fn composite_run<D: ReadbackTarget>(
 //!     target: &mut D,
@@ -33,59 +37,78 @@
 //! box, just a scratch run.
 //!
 //! It is a thin, dependency-light contract over [`embedded-graphics-core`]:
-//! implement [`read_pixel`](ReadbackTarget::read_pixel) and the rest follows.
+//! [`read_pixel`](ReadbackTarget::read_pixel) is the one required method, and
 //! [`read_area`](ReadbackTarget::read_area) copies a region out row-major in
-//! one call, defaulting to a `read_pixel` loop and overridable with a block
-//! copy.
+//! one call — defaulting to a `read_pixel` loop, overridable with a block copy.
 //!
-//! Because the capability belongs to the *target*, wrappers forward it:
-//! clipping, translating and offscreen adapters stay readback-capable by
-//! delegating both methods, so a pipeline keeps its capability all the way
-//! down.
+//! Because the capability belongs to the *target*, a wrapper carries it forward
+//! by delegating both methods — that is how a clipping, translating or
+//! offscreen layer keeps a pipeline readback-capable end to end.
+//! `embedded-graphics`' own [`DrawTargetExt`] adapters hold their parent
+//! privately, so a pipeline that reads through a layer supplies its own.
 //!
-//! # Delegating from `GetPixel`
+//! # Implementing it
 //!
 //! [`read_pixel`](ReadbackTarget::read_pixel) shares its signature with
 //! [`GetPixel::pixel`](embedded_graphics_core::image::GetPixel::pixel), so a
-//! target that already implements that trait delegates in one line:
+//! target that already implements that trait delegates in one line. A reader
+//! that hands back a bare colour needs a bounds guard instead, since
+//! `read_pixel` answers `None` outside the bounding box:
 //!
 //! ```
-//! use embedded_graphics_core::{draw_target::DrawTarget, geometry::Point, image::GetPixel};
+//! use embedded_graphics_core::{
+//!     draw_target::DrawTarget,
+//!     geometry::{Dimensions, Point},
+//!     image::GetPixel,
+//!     pixelcolor::Rgb565,
+//! };
 //! use embedded_graphics_readback::ReadbackTarget;
 //!
-//! # struct Fb;
-//! # impl GetPixel for Fb {
-//! #     type Color = embedded_graphics_core::pixelcolor::Rgb565;
-//! #     fn pixel(&self, _p: Point) -> Option<Self::Color> { None }
+//! # use embedded_graphics_core::{geometry::Size, primitives::Rectangle, Pixel};
+//! # struct Canvas;
+//! # impl Canvas {
+//! #     fn get_pixel(&self, _p: Point) -> Rgb565 { Rgb565::new(0, 0, 0) }
 //! # }
-//! # impl embedded_graphics_core::geometry::Dimensions for Fb {
-//! #     fn bounding_box(&self) -> embedded_graphics_core::primitives::Rectangle { Default::default() }
+//! # struct Fb;
+//! # struct Sim(Canvas);
+//! # impl Dimensions for Fb {
+//! #     fn bounding_box(&self) -> Rectangle { Rectangle::new(Point::zero(), Size::new(64, 64)) }
 //! # }
 //! # impl DrawTarget for Fb {
-//! #     type Color = embedded_graphics_core::pixelcolor::Rgb565;
+//! #     type Color = Rgb565;
 //! #     type Error = core::convert::Infallible;
 //! #     fn draw_iter<I>(&mut self, _: I) -> Result<(), Self::Error>
-//! #     where I: IntoIterator<Item = embedded_graphics_core::Pixel<Self::Color>> { Ok(()) }
+//! #     where I: IntoIterator<Item = Pixel<Self::Color>> { Ok(()) }
 //! # }
+//! # impl GetPixel for Fb {
+//! #     type Color = Rgb565;
+//! #     fn pixel(&self, _p: Point) -> Option<Rgb565> { None }
+//! # }
+//! # impl Dimensions for Sim {
+//! #     fn bounding_box(&self) -> Rectangle { Rectangle::new(Point::zero(), Size::new(64, 64)) }
+//! # }
+//! # impl DrawTarget for Sim {
+//! #     type Color = Rgb565;
+//! #     type Error = core::convert::Infallible;
+//! #     fn draw_iter<I>(&mut self, _: I) -> Result<(), Self::Error>
+//! #     where I: IntoIterator<Item = Pixel<Self::Color>> { Ok(()) }
+//! # }
+//! // Already a `GetPixel`: delegate.
 //! impl ReadbackTarget for Fb {
 //!     fn read_pixel(&self, point: Point) -> Option<Self::Color> {
 //!         GetPixel::pixel(self, point)
 //!     }
 //! }
-//! ```
 //!
-//! A reader that returns a bare colour needs a bounds guard, since `read_pixel`
-//! answers `None` outside the bounding box:
-//!
-//! ```rust,ignore
-//! fn read_pixel(&self, p: Point) -> Option<Rgb888> {
-//!     self.bounding_box().contains(p).then(|| self.0.get_pixel(p))
+//! // Hands back a bare colour: guard on the bounding box.
+//! impl ReadbackTarget for Sim {
+//!     fn read_pixel(&self, point: Point) -> Option<Self::Color> {
+//!         self.bounding_box()
+//!             .contains(point)
+//!             .then(|| self.0.get_pixel(point))
+//!     }
 //! }
 //! ```
-//!
-//! Readback is opt-in rather than blanket-implemented, so it stays a deliberate
-//! statement about a target and can carry the cost contract on
-//! [`ReadbackTarget`].
 //!
 //! # `embedded-graphics` framebuffers
 //!
@@ -99,10 +122,8 @@
 //! The impl covers every colour type and data order `embedded-graphics` makes
 //! drawable, and overrides [`read_area`](ReadbackTarget::read_area) to build
 //! the backing image once per region. Draw into a `Framebuffer`, hand it to any
-//! `ReadbackTarget` renderer, and flush it to the panel.
-//!
-//! `Framebuffer` is also the shortest route to readback for a streaming driver:
-//! render into one, then push it out over the bus.
+//! `ReadbackTarget` renderer, and flush it to the panel — which also makes it
+//! the shortest route to readback for a streaming driver.
 //!
 //! # Who implements it
 //!
@@ -114,6 +135,8 @@
 //!
 //! [`embedded_graphics::framebuffer::Framebuffer`]:
 //!     https://docs.rs/embedded-graphics/latest/embedded_graphics/framebuffer/struct.Framebuffer.html
+//! [`DrawTargetExt`]:
+//!     https://docs.rs/embedded-graphics/latest/embedded_graphics/draw_target/trait.DrawTargetExt.html
 //!
 //! [`embedded-graphics`]: https://docs.rs/embedded-graphics
 //! [`embedded-graphics-core`]: https://docs.rs/embedded-graphics-core
@@ -139,14 +162,13 @@ use embedded_graphics_core::{
 ///
 /// Destination-aware renderers call [`read_area`](Self::read_area) **once per
 /// run on the hot path** — they assume a read is roughly the cost of a write.
-/// That holds for RAM-backed framebuffers (a slice copy) and DMA-capable
-/// panels, which are the intended targets. A panel whose only read primitive is
-/// a slow per-pixel bus command must **not** implement this trait merely
-/// because it can: leaving the default [`read_area`](Self::read_area) in place
-/// turns every antialiased run into `width` bus round-trips and makes
-/// read-modify-write rendering O(pixels) on the bus. Implement it only when
-/// reads are cheap, and override [`read_area`](Self::read_area) with a block
-/// copy whenever the framebuffer allows it.
+/// That holds for RAM-backed framebuffers, where a read is slice arithmetic;
+/// those are the intended targets. A panel whose only read primitive is a slow
+/// per-pixel bus command should not implement this trait merely because it can:
+/// the default [`read_area`](Self::read_area) turns every antialiased run into
+/// `width` bus round-trips. Implement it where reads are cheap, and override
+/// [`read_area`](Self::read_area) with a block copy whenever the target allows
+/// it.
 pub trait ReadbackTarget: DrawTarget {
     /// The colour currently at `point`, or `None` if `point` lies outside the
     /// target's [bounding box](embedded_graphics_core::geometry::Dimensions::bounding_box).
