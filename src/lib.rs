@@ -219,6 +219,7 @@ pub trait ReadbackTarget: DrawTarget {
     /// target's [bounding box](embedded_graphics_core::geometry::Dimensions::bounding_box).
     ///
     /// Matches [`GetPixel::pixel`](embedded_graphics_core::image::GetPixel::pixel).
+    #[must_use]
     fn read_pixel(&self, point: Point) -> Option<Self::Color>;
 
     /// Read the pixels of `area` row-major into `out`, returning how many were
@@ -234,12 +235,17 @@ pub trait ReadbackTarget: DrawTarget {
     }
 }
 
-/// The per-pixel loop behind [`ReadbackTarget::read_area`]'s default.
+/// The per-pixel loop behind [`ReadbackTarget::read_area`]'s default: reads
+/// `area` row-major via [`read_pixel`](ReadbackTarget::read_pixel), writing
+/// each in-bounds colour to the matching `out` slot and returning the
+/// in-bounds count.
 ///
-/// Shared with the [`adapters`], which override `read_area` to hand whole
-/// regions to their parent and fall back to this when the region only partly
+/// Public for wrappers that override
+/// [`read_area`](ReadbackTarget::read_area) with a fast path and need the
+/// per-pixel walk where that path does not apply — the [`adapters`] hand whole
+/// regions to their parent and fall back to this when a region only partly
 /// overlaps the layer.
-pub(crate) fn read_area_by_pixel<T>(target: &T, area: &Rectangle, out: &mut [T::Color]) -> usize
+pub fn read_area_by_pixel<T>(target: &T, area: &Rectangle, out: &mut [T::Color]) -> usize
 where
     T: ReadbackTarget + ?Sized,
 {

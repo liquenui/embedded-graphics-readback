@@ -112,7 +112,7 @@ use embedded_graphics_readback::ReadbackTargetExt;
 let mut layer = fb.shifted(Point::new(2, 2));
 let mut view = layer.masked(&Rectangle::new(Point::zero(), Size::new(4, 4)));
 
-composite_run(&mut view, ...);
+composite_run(&mut view, /* ... */);
 ```
 
 `Shifted`, `Windowed` and `Masked` each implement `DrawTarget` with the same
@@ -123,8 +123,8 @@ field with no accessor, so readback cannot be delegated through those. The names
 differ deliberately: `DrawTargetExt` is blanket-implemented for every
 `DrawTarget` and sits in the embedded-graphics prelude, so a shared name would
 leave both candidates applicable at every call site that glob-imports it. Each
-method is shorthand for a constructor — `Shifted::new(&mut fb, offset)` — which
-needs no import.
+method is shorthand for a constructor — `Shifted::new(&mut fb, offset)` — for
+code that would rather not import the trait.
 
 `read_area` hands a whole region to the parent when it falls inside the layer,
 so a parent with a block copy keeps it, and falls back to a per-pixel walk only

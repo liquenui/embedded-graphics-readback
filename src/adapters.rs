@@ -43,7 +43,7 @@
 //! #     }
 //! # }
 //! let mut fb = Fb([Rgb565::BLACK; 64]);
-//! fb.read_pixel(Point::new(4, 4));
+//! assert_eq!(fb.read_pixel(Point::new(4, 4)), Some(Rgb565::BLACK));
 //!
 //! // Shift the origin, then mask: the capability survives both layers.
 //! let mut layer = fb.shifted(Point::new(2, 2));
@@ -69,6 +69,7 @@ use crate::{ReadbackTarget, read_area_by_pixel};
 
 /// Shift a rectangle without pulling in `embedded-graphics`' `Transform`, which
 /// does not live in `embedded-graphics-core`.
+#[inline]
 fn translate(area: &Rectangle, offset: Point) -> Rectangle {
     Rectangle::new(area.top_left + offset, area.size)
 }
@@ -83,20 +84,25 @@ fn translate(area: &Rectangle, offset: Point) -> Rectangle {
 /// `cropped` and `clipped`: that trait is blanket-implemented for every
 /// [`DrawTarget`] and sits in `embedded-graphics`' prelude, so sharing a name
 /// would make both candidates apply at every call site that glob-imports it.
-/// Each method is shorthand for the matching struct constructor, which needs
-/// no import at all.
+/// Each method is shorthand for the matching struct constructor, for call
+/// sites that would rather not import this trait.
 pub trait ReadbackTargetExt: ReadbackTarget + Sized {
     /// Translate the target's origin by `offset`.
     ///
     /// Point `p` on the adapter addresses `p + offset` on the parent.
+    #[must_use]
     fn shifted(&mut self, offset: Point) -> Shifted<'_, Self>;
 
     /// Restrict the target to `area`, moving the origin to `area.top_left`.
     ///
     /// `area` is clamped to the parent's bounding box first.
+    #[must_use]
     fn windowed(&mut self, area: &Rectangle) -> Windowed<'_, Self>;
 
     /// Restrict the target to `area`, keeping the parent's coordinates.
+    ///
+    /// `area` is clamped to the parent's bounding box first.
+    #[must_use]
     fn masked(&mut self, area: &Rectangle) -> Masked<'_, Self>;
 }
 
@@ -127,16 +133,19 @@ pub struct Shifted<'a, T> {
 impl<'a, T> Shifted<'a, T> {
     /// Wrap `parent`, shifting every coordinate that crosses this layer by
     /// `offset`.
+    #[must_use]
     pub fn new(parent: &'a mut T, offset: Point) -> Self {
         Self { parent, offset }
     }
 
     /// The target underneath this layer.
+    #[must_use]
     pub fn parent(&self) -> &T {
         self.parent
     }
 
     /// The offset applied to every coordinate crossing this layer.
+    #[must_use]
     pub fn offset(&self) -> Point {
         self.offset
     }
@@ -215,6 +224,7 @@ where
 {
     /// Wrap `parent`, restricting it to `area` and moving the origin to
     /// `area.top_left`. `area` is clamped to the parent's bounding box.
+    #[must_use]
     pub fn new(parent: &'a mut T, area: &Rectangle) -> Self {
         let area = area.intersection(&parent.bounding_box());
 
@@ -227,8 +237,15 @@ where
 
 impl<T> Windowed<'_, T> {
     /// The target underneath this layer.
+    #[must_use]
     pub fn parent(&self) -> &T {
         self.parent.parent()
+    }
+
+    /// The window's top-left corner, in the parent's coordinates.
+    #[must_use]
+    pub fn offset(&self) -> Point {
+        self.parent.offset()
     }
 }
 
@@ -299,21 +316,32 @@ pub struct Masked<'a, T> {
     mask_area: Rectangle,
 }
 
-impl<'a, T> Masked<'a, T> {
+impl<'a, T> Masked<'a, T>
+where
+    T: DrawTarget,
+{
     /// Wrap `parent`, admitting only the pixels inside `area`.
+    ///
+    /// `area` is clamped to the parent's bounding box, matching
+    /// `embedded-graphics`' `Clipped`, so the layer never reports a bounding
+    /// box larger than the pixels behind it.
+    #[must_use]
     pub fn new(parent: &'a mut T, area: &Rectangle) -> Self {
-        Self {
-            parent,
-            mask_area: *area,
-        }
-    }
+        let mask_area = area.intersection(&parent.bounding_box());
 
+        Self { parent, mask_area }
+    }
+}
+
+impl<T> Masked<'_, T> {
     /// The target underneath this layer.
+    #[must_use]
     pub fn parent(&self) -> &T {
         self.parent
     }
 
     /// The region this layer admits, in the parent's coordinates.
+    #[must_use]
     pub fn mask_area(&self) -> Rectangle {
         self.mask_area
     }
@@ -513,6 +541,7 @@ mod tests {
         let view = fb.windowed(&rect(2, 3, 4, 4));
 
         assert_eq!(view.bounding_box(), rect(0, 0, 4, 4));
+        assert_eq!(view.offset(), Point::new(2, 3));
         assert_eq!(view.read_pixel(Point::zero()), Some(Rgb565::RED));
     }
 
@@ -569,6 +598,16 @@ mod tests {
 
         assert_eq!(view.read_pixel(Point::new(1, 1)), None);
         assert_eq!(view.read_pixel(Point::new(6, 6)), None);
+    }
+
+    #[test]
+    fn masked_clamps_to_the_parent() {
+        let mut fb = Fb::new();
+        let view = fb.masked(&rect(4, 4, 100, 100));
+
+        // The mask cannot report more pixels than the parent holds.
+        assert_eq!(view.bounding_box(), rect(4, 4, 4, 4));
+        assert_eq!(view.mask_area(), rect(4, 4, 4, 4));
     }
 
     #[test]
