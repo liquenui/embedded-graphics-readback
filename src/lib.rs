@@ -41,11 +41,52 @@
 //! [`read_area`](ReadbackTarget::read_area) copies a region out row-major in
 //! one call — defaulting to a `read_pixel` loop, overridable with a block copy.
 //!
+//! # Layers
+//!
 //! Because the capability belongs to the *target*, a wrapper carries it forward
-//! by delegating both methods — that is how a clipping, translating or
-//! offscreen layer keeps a pipeline readback-capable end to end.
-//! `embedded-graphics`' own [`DrawTargetExt`] adapters hold their parent
-//! privately, so a pipeline that reads through a layer supplies its own.
+//! by delegating both methods. [`adapters`] ships the three that matter —
+//! [`Shifted`](adapters::Shifted), [`Windowed`](adapters::Windowed) and
+//! [`Masked`](adapters::Masked) — so a pipeline keeps readback end to end:
+//!
+//! ```
+//! # use embedded_graphics_core::{
+//! #     Pixel, draw_target::DrawTarget, geometry::{OriginDimensions, Point, Size},
+//! #     pixelcolor::{Rgb565, RgbColor}, primitives::Rectangle,
+//! # };
+//! # use embedded_graphics_readback::ReadbackTarget;
+//! use embedded_graphics_readback::ReadbackTargetExt;
+//!
+//! # struct Fb([Rgb565; 64]);
+//! # impl Fb {
+//! #     fn index(p: Point) -> Option<usize> {
+//! #         ((0..8).contains(&p.x) && (0..8).contains(&p.y)).then(|| (p.y * 8 + p.x) as usize)
+//! #     }
+//! # }
+//! # impl OriginDimensions for Fb {
+//! #     fn size(&self) -> Size { Size::new(8, 8) }
+//! # }
+//! # impl DrawTarget for Fb {
+//! #     type Color = Rgb565;
+//! #     type Error = core::convert::Infallible;
+//! #     fn draw_iter<I>(&mut self, _: I) -> Result<(), Self::Error>
+//! #     where I: IntoIterator<Item = Pixel<Self::Color>> { Ok(()) }
+//! # }
+//! # impl ReadbackTarget for Fb {
+//! #     fn read_pixel(&self, p: Point) -> Option<Rgb565> {
+//! #         Fb::index(p).map(|i| self.0[i])
+//! #     }
+//! # }
+//! # let mut fb = Fb([Rgb565::BLACK; 64]);
+//! let mut layer = fb.shifted(Point::new(2, 2));
+//! let mut view = layer.masked(&Rectangle::new(Point::zero(), Size::new(4, 4)));
+//!
+//! composite_run(&mut view, /* ... */);
+//! # fn composite_run<D: ReadbackTarget>(_: &mut D) {}
+//! ```
+//!
+//! `embedded-graphics`' own [`DrawTargetExt`] adapters hold their parent in a
+//! private field with no accessor, so readback cannot be delegated through
+//! them — these are read-capable equivalents with the same write semantics.
 //!
 //! # Implementing it
 //!
@@ -142,9 +183,13 @@
 //! [`embedded-graphics-core`]: https://docs.rs/embedded-graphics-core
 //! [`DrawTarget`]: embedded_graphics_core::draw_target::DrawTarget
 
+pub mod adapters;
+
 #[cfg(feature = "framebuffer")]
 #[cfg_attr(docsrs, doc(cfg(feature = "framebuffer")))]
 mod framebuffer;
+
+pub use adapters::ReadbackTargetExt;
 
 use embedded_graphics_core::{
     draw_target::DrawTarget,
@@ -185,15 +230,27 @@ pub trait ReadbackTarget: DrawTarget {
     /// `area` or `out` is exhausted first. Override this when the target can
     /// copy a whole region out of its framebuffer in one operation.
     fn read_area(&self, area: &Rectangle, out: &mut [Self::Color]) -> usize {
-        let mut written = 0;
-        for (slot, point) in out.iter_mut().zip(area.points()) {
-            if let Some(color) = self.read_pixel(point) {
-                *slot = color;
-                written += 1;
-            }
-        }
-        written
+        read_area_by_pixel(self, area, out)
     }
+}
+
+/// The per-pixel loop behind [`ReadbackTarget::read_area`]'s default.
+///
+/// Shared with the [`adapters`], which override `read_area` to hand whole
+/// regions to their parent and fall back to this when the region only partly
+/// overlaps the layer.
+pub(crate) fn read_area_by_pixel<T>(target: &T, area: &Rectangle, out: &mut [T::Color]) -> usize
+where
+    T: ReadbackTarget + ?Sized,
+{
+    let mut written = 0;
+    for (slot, point) in out.iter_mut().zip(area.points()) {
+        if let Some(color) = target.read_pixel(point) {
+            *slot = color;
+            written += 1;
+        }
+    }
+    written
 }
 
 #[cfg(test)]

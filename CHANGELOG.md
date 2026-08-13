@@ -40,6 +40,22 @@ against one concrete framebuffer.
   out-of-bounds slots are left untouched, so callers can pre-fill a
   fallback colour. This is the method destination-aware renderers call on
   the hot path, once per run rather than once per pixel.
+- **`ReadbackTargetExt` and the `adapters` module** — `Shifted`, `Windowed` and
+  `Masked` layers that implement `DrawTarget` with the same write semantics as
+  their `embedded-graphics` counterparts (`Translated`, `Cropped`, `Clipped`)
+  and `ReadbackTarget` on top, so a pipeline keeps the capability through a
+  layer. `embedded-graphics`' own `DrawTargetExt` adapters hold their parent in
+  a private field with no accessor, which makes delegating readback through
+  them impossible from any crate. Each layer forwards a whole region to its
+  parent's `read_area` when it falls inside the layer and walks per-pixel only
+  where the region straddles an edge. Reads honour the layer's bounding box
+  even where writes do not, so the in-bounds count `read_area` returns stays
+  meaningful. The names differ from `DrawTargetExt`'s on purpose: that trait is
+  blanket-implemented for every `DrawTarget` and sits in the
+  `embedded-graphics` prelude, so a shared name would leave both candidates
+  applicable at every glob-importing call site. Each method is shorthand for a
+  public constructor on the layer. The layers expose the `parent()` accessor
+  the originals lack, so downstream code can extend them.
 - **`framebuffer` feature** — implements `ReadbackTarget` for
   `embedded_graphics::framebuffer::Framebuffer`. The impl is generic over
   the intersection of `embedded-graphics`' own `DrawTarget` and

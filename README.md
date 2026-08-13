@@ -100,11 +100,37 @@ fn read_area(&self, area: &Rectangle, out: &mut [Self::Color]) -> usize {
 }
 ```
 
+## Layers
+
 Because the capability belongs to the _target_, a wrapper carries it forward by
-delegating both methods — that is how a clipping, translating or offscreen layer
-keeps a pipeline readback-capable end to end. embedded-graphics' own
-[`DrawTargetExt`] adapters hold their parent privately, so a pipeline that reads
-through a layer supplies its own.
+delegating both methods. The `adapters` module ships the three that matter, so a
+pipeline keeps readback end to end:
+
+```rust
+use embedded_graphics_readback::ReadbackTargetExt;
+
+let mut layer = fb.shifted(Point::new(2, 2));
+let mut view = layer.masked(&Rectangle::new(Point::zero(), Size::new(4, 4)));
+
+composite_run(&mut view, ...);
+```
+
+`Shifted`, `Windowed` and `Masked` each implement `DrawTarget` with the same
+write semantics as their embedded-graphics counterparts — `Translated`,
+`Cropped` and `Clipped` — plus `ReadbackTarget`. They exist because
+embedded-graphics' own [`DrawTargetExt`] adapters hold their parent in a private
+field with no accessor, so readback cannot be delegated through those. The names
+differ deliberately: `DrawTargetExt` is blanket-implemented for every
+`DrawTarget` and sits in the embedded-graphics prelude, so a shared name would
+leave both candidates applicable at every call site that glob-imports it. Each
+method is shorthand for a constructor — `Shifted::new(&mut fb, offset)` — which
+needs no import.
+
+`read_area` hands a whole region to the parent when it falls inside the layer,
+so a parent with a block copy keeps it, and falls back to a per-pixel walk only
+where the region straddles an edge. Unlike writes, reads honour the layer's
+bounding box: a point outside it is `None` even where the parent still holds a
+pixel.
 
 ## Who implements it
 
